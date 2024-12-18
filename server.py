@@ -4,8 +4,9 @@ from fastapi import (
 )  # FastAPIフレームワークの基本機能とエラー処理用のクラス
 from fastapi.middleware.cors import CORSMiddleware  # CORSを有効にするためのミドルウェア
 from pydantic import BaseModel  # データのバリデーション（検証）を行うための基本クラス
-from typing import Optional  # 省略可能な項目を定義するために使用
+from typing import Optional, List # 省略可能な項目を定義するために使用
 import sqlite3  # SQLiteデータベースを使用するためのライブラリ
+from datetime import datetime
 
 # FastAPIアプリケーションのインスタンスを作成
 app = FastAPI()
@@ -24,20 +25,34 @@ app.add_middleware(
 # データベースの初期設定を行う関数
 def init_db():
     # SQLiteデータベースに接続（ファイルが存在しない場合は新規作成）
-    with sqlite3.connect("todos.db") as conn:
+    with sqlite3.connect("travel_planner.db") as conn:
         # TODOを保存するテーブルを作成（すでに存在する場合は作成しない）
         # 自動増分する一意のID（INTEGER PRIMARY KEY AUTOINCREMENT）
         # TODOのタイトル（TEXT NOT NULL）
         # 完了状態（BOOLEAN DEFAULT FALSE）
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS todos (
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS activities (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 title TEXT NOT NULL,
+                start_time TEXT NOT NULL,
+                duration INTEGER NOT NULL,
+                cost REAL NOT NULL,
+                location TEXT NOT NULL,
+                notes TEXT,
                 completed BOOLEAN DEFAULT FALSE
             )
-        """
-        )
+        """)
+
+        # ほしいものリストテーブル
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS wishlist (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                price REAL NOT NULL,
+                priority INTEGER DEFAULT 1,
+                purchased BOOLEAN DEFAULT FALSE
+            )
+        """)
 
 
 # アプリケーション起動時にデータベースを初期化
@@ -45,69 +60,158 @@ init_db()
 
 
 # リクエストボディのデータ構造を定義するクラス
-class Todo(BaseModel):
+class ActivityBase(BaseModel):
     title: str  # TODOのタイトル（必須）
-    completed: Optional[bool] = False  # 完了状態（省略可能、デフォルトは未完了）
+    start_time: str
+    duration: int
+    cost: float
+    location: str
+    notes: Optional[str] = None  # 完了状態（省略可能、デフォルトは未完了）
 
 
 # レスポンスのデータ構造を定義するクラス（TodoクラスにIDを追加）
-class TodoResponse(Todo):
+class Activity(ActivityBase):
     id: int  # TODOのID
+    completed: bool = False
+
+#ウィッシュリストを作成する
+class WishlistItemBase(BaseModel):
+    name: str
+    price: float
+    priority: int = 1
+
+class WishlistItem(WishlistItemBase):
+    id: int
+    purchased: bool = False
 
 
 # 新規TODOを作成するエンドポイント
-@app.post("/todos", response_model=TodoResponse)
-def create_todo(todo: Todo):
-    with sqlite3.connect("todos.db") as conn:
+@app.post("/activities", response_model=Activity)
+def create_activity(activity: ActivityBase):
+    with get_db_connection() as conn:
         cursor = conn.execute(
-            # SQLインジェクション対策のためパラメータ化したSQL文を使用
-            "INSERT INTO todos (title, completed) VALUES (?, ?)",
-            (todo.title, todo.completed),
+            """
+            INSERT INTO activities (title, start_time, duration, cost, location, notes, completed)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (activity.title, activity.start_time, activity.duration, 
+             activity.cost, activity.location, activity.notes, False)
         )
-        todo_id = cursor.lastrowid  # 新しく作成されたTODOのIDを取得
-        return {"id": todo_id, "title": todo.title, "completed": todo.completed}
+        conn.commit()
+        activity_id = cursor.lastrowid # 新しく作成されたTODOのIDを取得
+        return {**activity.dict(), "id": activity_id, "completed": False}
+
+
+
+@app.get("/activities", response_model=List[Activity])
+def get_activities():
+    with sqlite3.connect("travel_planner.db") as conn:
+        cursor.execute("SELECT * FROM activities WHERE id = ?", (activity_id,))
+        created = cursor.fetchone()
+        return {
+            "id": created[0],
+            "title": created[1],
+            "start_time": created[2],
+            "duration": created[3],
+            "cost": created[4],
+            "location": created[5],
+            "notes": created[6],
+            "completed": bool(created[7])
+        }
 
 
 # 全てのTODOを取得するエンドポイント
-@app.get("/todos")
-def get_todos():
-    with sqlite3.connect("todos.db") as conn:
-        todos = conn.execute("SELECT * FROM todos").fetchall()  # 全てのTODOを取得
-        # データベースから取得したタプルをJSON形式に変換して返す
-        return [{"id": t[0], "title": t[1], "completed": bool(t[2])} for t in todos]
-
-
-# 指定されたIDのTODOを取得するエンドポイント
-@app.get("/todos/{todo_id}")
-def get_todo(todo_id: int):
-    with sqlite3.connect("todos.db") as conn:
-        # 指定されたIDのTODOを検索
-        todo = conn.execute("SELECT * FROM todos WHERE id = ?", (todo_id,)).fetchone()
-        if not todo:  # TODOが見つからない場合は404エラーを返す
-            raise HTTPException(status_code=404, detail="Todo not found")
-        return {"id": todo[0], "title": todo[1], "completed": bool(todo[2])}
-
-
-# 指定されたIDのTODOを更新するエンドポイント
-@app.put("/todos/{todo_id}")
-def update_todo(todo_id: int, todo: Todo):
-    with sqlite3.connect("todos.db") as conn:
-        # タイトルと完了状態を更新
+@app.post("/wishlist", response_model=WishlistItem)
+def create_wishlist_item(item: WishlistItemBase):
+    with sqlite3.connect("travel_planner.db") as conn:
         cursor = conn.execute(
-            "UPDATE todos SET title = ?, completed = ? WHERE id = ?",
-            (todo.title, todo.completed, todo_id),
+            """
+            INSERT INTO wishlist (name, price, priority)
+            VALUES (?, ?, ?)
+            """,
+            (item.name, item.price, item.priority)
         )
-        if cursor.rowcount == 0:  # 更新対象のTODOが存在しない場合は404エラーを返す
-            raise HTTPException(status_code=404, detail="Todo not found")
-        return {"id": todo_id, "title": todo.title, "completed": todo.completed}
+        item_id = cursor.lastrowid
+        return {**item.dict(), "id": item_id, "purchased": False}
 
+@app.get("/wishlist", response_model=List[WishlistItem])
+def get_wishlist():
+    with sqlite3.connect("travel_planner.db") as conn:
+        cursor = conn.execute("SELECT * FROM wishlist ORDER BY priority DESC")
+        items = cursor.fetchall()
+        return [
+            {
+                "id": i[0],
+                "name": i[1],
+                "price": i[2],
+                "priority": i[3],
+                "purchased": bool(i[4])
+            }
+            for i in items
+        ]
 
-# 指定されたIDのTODOを削除するエンドポイント
-@app.delete("/todos/{todo_id}")
-def delete_todo(todo_id: int):
-    with sqlite3.connect("todos.db") as conn:
-        # 指定されたIDのTODOを削除
-        cursor = conn.execute("DELETE FROM todos WHERE id = ?", (todo_id,))
-        if cursor.rowcount == 0:  # 削除対象のTODOが存在しない場合は404エラーを返す
-            raise HTTPException(status_code=404, detail="Todo not found")
-        return {"message": "Todo deleted"}
+@app.put("/activities/{activity_id}/complete")
+def complete_activity(activity_id: int):
+    with sqlite3.connect("travel_planner.db") as conn:
+        cursor = conn.execute(
+            "UPDATE activities SET completed = TRUE WHERE id = ?",
+            (activity_id,)
+        )
+        if cursor.rowcount == 0:
+            raise HTTPException(status_code=404, detail="Activity not found")
+        return {"message": "Activity marked as complete"}
+
+@app.put("/wishlist/{item_id}/purchase")
+def purchase_item(item_id: int):
+    with sqlite3.connect("travel_planner.db") as conn:
+        cursor = conn.execute(
+            "UPDATE wishlist SET purchased = TRUE WHERE id = ?",
+            (item_id,)
+        )
+        if cursor.rowcount == 0:
+            raise HTTPException(status_code=404, detail="Item not found")
+        return {"message": "Item marked as purchased"}
+
+@app.get("/financial-summary")
+def get_financial_summary():
+    with sqlite3.connect("travel_planner.db") as conn:
+        cursor = conn.cursor()
+
+        cursor.execute('SELECT SUM(cost) FROM activities')
+        activities_cost = cursor.fetchone()[0] or 0
+
+        cursor.execute('SELECT SUM(price) FROM wishlist')
+        wishlist_cost = cursor.fetchone()[0] or 0
+
+        cursor.execute('''
+            SELECT 
+                (SELECT COALESCE(SUM(cost), 0) FROM activities WHERE completed = 1) +
+                (SELECT COALESCE(SUM(price), 0) FROM wishlist WHERE purchased = 1)
+        ''')
+        spent_money = cursor.fetchone()[0] or 0
+
+        total_budget = activities_cost + wishlist_cost
+
+        return {
+            "total_budget": total_budget,
+            "spent_money": spent_money,
+            "remaining_budget": total_budget - spent_money
+        }
+        @app.get("/debug/database")
+def debug_database():
+    with sqlite3.connect("travel_planner.db") as conn:
+        cursor = conn.cursor()
+
+        # テーブル構造の確認
+        cursor.execute("SELECT * FROM sqlite_master WHERE type='table'")
+        tables = cursor.fetchall()
+
+        # データの確認
+        activities = cursor.execute("SELECT * FROM activities").fetchall()
+        wishlist = cursor.execute("SELECT * FROM wishlist").fetchall()
+
+        return {
+            "tables": tables,
+            "activities": activities,
+            "wishlist": wishlist
+        }

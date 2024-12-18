@@ -4,34 +4,78 @@
     <meta charset="UTF-8">
     <!-- ビューポートの設定：モバイルデバイスでの表示を最適化 -->
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>シンプルTODO</title>
+    <title>旅行プラン</title>
     <style>
         /* フォームの上下に余白を追加 */
-        .todo-form {
-            margin: 1rem 0;
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
         }
-        /* 完了したTODOのスタイル：取り消し線と薄い色 */
+        .section {
+            margin-bottom: 30px;
+            padding: 20px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+        }
         .completed {
             text-decoration: line-through;
             color: gray;
         }
+        .form-group {
+            margin-bottom: 15px;
+        }
+        .summary {
+            background-color: #f8f9fa;
+            padding: 15px;
+            border-radius: 5px;
+        }
     </style>
 </head>
 <body>
-    <h1>TODOリスト</h1>
-    
+    <div class="container">
+    <h1>旅行プラン</h1>
+    <div class="section">
     <!-- TODOを追加するためのフォーム -->
-    <form id="todoForm" class="todo-form">
-        <input type="text" id="todoInput" placeholder="新しいTODOを入力..." required>
+    <h2>アクティビティ</h2>
+    <form id="activityForm" class="form-group">
+        <input type="text" id="titleInput" placeholder="タイトル" required>
+        <input type="datetime-local" id="startTimeInput" required>
+        <input type="number" id="durationInput" placeholder="所要時間（分）" required>
+        <input type="number" id="costInput" placeholder="費用" required>
+        <input type="text" id="locationInput" placeholder="場所" required>
+        <textarea id="notesInput" placeholder="メモ"></textarea>
         <button type="submit">追加</button>
     </form>
+    <ul id="activityList"></ul>
+</div>
+
+        <!-- ほしいものリストセクション -->
+        <div class="section">
+            <h2>ほしいものリスト</h2>
+            <form id="wishlistForm" class="form-group">
+                <input type="text" id="wishItemInput" placeholder="アイテム名" required>
+                <input type="number" id="priceInput" placeholder="価格" required>
+                <input type="number" id="priorityInput" placeholder="優先度(1-5)" min="1" max="5" required>
+                <button type="submit">追加</button>
+            </form>
+            <ul id="wishlist"></ul>
+        </div>
+
+        <!-- 財務サマリーセクション -->
+        <div class="section summary">
+            <h2>予算サマリー</h2>
+            <div id="financialSummary"></div>
+        </div>
+    </div>
+
 
     <!-- TODOリストを表示する場所 -->
     <ul id="todoList"></ul>
 
     <script>
         // APIのベースURL：実際のAPIサーバーのアドレス
-        const API_URL = 'http://localhost:8000/todos';
+        const API_URL = 'http://localhost:8000';
         
         /**
          * APIとの通信を行う汎用関数
@@ -70,7 +114,7 @@
         /**
          * すべてのTODOを読み込んでページに表示
          */
-        async function loadTodos() {
+        async function renderActivity(activity) {
             // APIからTODOリストを取得
             const todos = await api(API_URL);
             if (todos) {
@@ -80,72 +124,161 @@
             }
         }
 
-        /**
-         * 新しいTODOを追加
-         * @param {string} title - 新しいTODOのタイトル
-         */
-        async function addTodo(title) {
-            // POSTリクエストでTODOを追加
-            await api(API_URL, {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({ title, completed: false })
-            });
-            // リストを再読み込みして表示を更新
-            loadTodos();
+        // アクティビティの表示
+        function renderActivity(activity) {
+            return `
+                <li>
+                    <input type="checkbox" 
+                           ${activity.completed ? 'checked' : ''} 
+                           onchange="toggleActivity(${activity.id}, this.checked)">
+                    <span class="${activity.completed ? 'completed' : ''}">
+                        ${activity.title} - ${activity.start_time} (${activity.duration}分)
+                        場所: ${activity.location} 
+                        費用: ¥${activity.cost}
+                    </span>
+                </li>
+            `;
         }
 
-        /**
-         * TODOの完了状態を切り替え
-         * @param {number} id - TODOのID
-         * @param {boolean} completed - 新しい完了状態
-         */
-        async function toggleTodo(id, completed) {
-            // 現在のTODO情報を取得
-            const todo = await api(`${API_URL}/${id}`);
-            if (todo) {
-                // PUTリクエストでTODOを更新
-                await api(`${API_URL}/${id}`, {
-                    method: 'PUT',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ ...todo, completed })
-                });
-                // リストを再読み込みして表示を更新
-                loadTodos();
+        // ほしいものリストアイテムの表示
+        function renderWishlistItem(item) {
+            return `
+                <li>
+                    <input type="checkbox" 
+                           ${item.purchased ? 'checked' : ''} 
+                           onchange="toggleWishlistItem(${item.id}, this.checked)">
+                    <span class="${item.purchased ? 'completed' : ''}">
+                        ${item.name} - ¥${item.price} (優先度: ${item.priority})
+                    </span>
+                </li>
+            `;
+        }
+
+        // アクティビティの読み込み
+        async function loadActivities() {
+            const activities = await api('/activities');
+            if (activities) {
+                document.getElementById('activityList').innerHTML = 
+                    activities.map(renderActivity).join('');
             }
         }
 
-        /**
-         * TODOを削除
-         * @param {number} id - 削除するTODOのID
-         */
-        async function deleteTodo(id) {
-            // DELETEリクエストでTODOを削除
-            await api(`${API_URL}/${id}`, { method: 'DELETE' });
-            // リストを再読み込みして表示を更新
-            loadTodos();
+        // ほしいものリストの読み込み
+        async function loadWishlist() {
+            const items = await api('/wishlist');
+            if (items) {
+                document.getElementById('wishlist').innerHTML = 
+                    items.map(renderWishlistItem).join('');
+            }
         }
 
-        // ページ読み込み完了時の処理
-        document.addEventListener('DOMContentLoaded', () => {
-            // 初期表示としてTODOリストを読み込む
-            loadTodos();
-            
-            // フォームの送信イベントを処理
-            document.getElementById('todoForm').addEventListener('submit', e => {
-                // フォームのデフォルトの送信動作を防止
-                e.preventDefault();
-                // 入力されたテキストを取得
-                const input = document.getElementById('todoInput');
-                const title = input.value.trim();
-                // テキストが入力されている場合のみTODOを追加
-                if (title) {
-                    addTodo(title);
-                    // 入力フィールドをクリア
-                    input.value = '';
-                }
+        // 財務サマリーの読み込み
+        async function loadFinancialSummary() {
+            const summary = await api('/financial-summary');
+            if (summary) {
+                document.getElementById('financialSummary').innerHTML = `
+                    <p>総予算: ¥${summary.total_budget}</p>
+                    <p>使用済み: ¥${summary.spent_money}</p>
+                    <p>残額: ¥${summary.remaining_budget}</p>
+                `;
+            }
+        }
+
+        // アクティビティの追加
+        async function addActivity(data) {
+            try {
+                await api('/activities', {
+                    method: 'POST',
+                    body: JSON.stringify(data)
+                });
+                await loadActivities();
+                await loadFinancialSummary();
+             } catch (error) {
+                console.error('Activity addition failed:', error);
+             }
+        }
+
+        // ほしいものリストアイテムの追加
+        async function addWishlistItem(data) {
+            try {
+                await api('/wishlist', {  // '/todos'から'/wishlist'に変更
+                    method: 'POST',
+                    body: JSON.stringify(data)
+                });
+                await loadWishlist();
+                await loadFinancialSummary();
+            } catch (error) {
+                console.error('Wishlist item addition failed:', error);
+            }
+        }
+
+        // アクティビティの完了状態切り替え
+        async function toggleActivity(id, completed) {
+            await api(`/activities/${id}/complete`, {
+                method: 'PUT'
             });
-        });
+            loadActivities();
+            loadFinancialSummary();
+        }
+
+        // ほしいものリストアイテムの購入状態切り替え
+        async function toggleWishlistItem(id, purchased) {
+            await api(`/wishlist/${id}/purchase`, {
+                method: 'PUT'
+            });
+            loadWishlist();
+            loadFinancialSummary();
+        }
+
+        // ページ読み込み時の初期化を修正
+document.addEventListener('DOMContentLoaded', async () => {
+    try {
+        console.log('Loading initial data...');
+        await loadActivities();
+        await loadWishlist();
+        await loadFinancialSummary();
+        console.log('Initial data loaded successfully');
+    } catch (error) {
+        console.error('Failed to load initial data:', error);
+    }
+
+    // アクティビティフォームの送信処理
+    document.getElementById('activityForm').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        try {
+            const activity = {
+                title: document.getElementById('titleInput').value,
+                start_time: document.getElementById('startTimeInput').value,
+                duration: parseInt(document.getElementById('durationInput').value),
+                cost: parseFloat(document.getElementById('costInput').value),
+                location: document.getElementById('locationInput').value,
+                notes: document.getElementById('notesInput').value
+            };
+            console.log('Submitting activity:', activity);
+            await addActivity(activity);
+            e.target.reset();
+        } catch (error) {
+            console.error('Failed to add activity:', error);
+        }
+    });
+
+    // ほしいものリストフォームの送信処理
+    document.getElementById('wishlistForm').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        try {
+            const item = {
+                name: document.getElementById('wishItemInput').value,
+                price: parseFloat(document.getElementById('priceInput').value),
+                priority: parseInt(document.getElementById('priorityInput').value)
+            };
+            console.log('Submitting wishlist item:', item);
+            await addWishlistItem(item);
+            e.target.reset();
+        } catch (error) {
+            console.error('Failed to add wishlist item:', error);
+        }
+    });
+});
     </script>
 </body>
 </html>
