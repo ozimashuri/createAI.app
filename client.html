@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <!-- ビューポートの設定：モバイルデバイスでの表示を最適化 -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>シンプルTODO</title>
+    <style>
+        /* フォームの上下に余白を追加 */
+        .todo-form {
+            margin: 1rem 0;
+        }
+        /* 完了したTODOのスタイル：取り消し線と薄い色 */
+        .completed {
+            text-decoration: line-through;
+            color: gray;
+        }
+    </style>
+</head>
+<body>
+    <h1>TODOリスト</h1>
+    
+    <!-- TODOを追加するためのフォーム -->
+    <form id="todoForm" class="todo-form">
+        <input type="text" id="todoInput" placeholder="新しいTODOを入力..." required>
+        <button type="submit">追加</button>
+    </form>
+
+    <!-- TODOリストを表示する場所 -->
+    <ul id="todoList"></ul>
+
+    <script>
+        // APIのベースURL：実際のAPIサーバーのアドレス
+        const API_URL = 'http://localhost:8000/todos';
+        
+        /**
+         * APIとの通信を行う汎用関数
+         * @param {string} endpoint - APIのエンドポイント
+         * @param {Object} options - fetchのオプション（メソッド、ヘッダーなど）
+         * @returns {Promise} APIからのレスポンス
+         */
+        async function api(endpoint, options = {}) {
+            try {
+                const response = await fetch(endpoint, options);
+                if (!response.ok) throw new Error('API error');
+                return response.json();
+            } catch (error) {
+                alert('エラーが発生しました');
+                console.error(error);
+            }
+        }
+
+        /**
+         * 1つのTODOアイテムのHTMLを生成
+         * @param {Object} todo - TODOオブジェクト（id, title, completedを含む）
+         * @returns {string} TODOアイテムのHTML文字列
+         */
+        function renderTodo(todo) {
+            return `
+                <li>
+                    <input type="checkbox" 
+                           ${todo.completed ? 'checked' : ''} 
+                           onchange="toggleTodo(${todo.id}, this.checked)">
+                    <span class="${todo.completed ? 'completed' : ''}">${todo.title}</span>
+                    <button onclick="deleteTodo(${todo.id})">削除</button>
+                </li>
+            `;
+        }
+
+        /**
+         * すべてのTODOを読み込んでページに表示
+         */
+        async function loadTodos() {
+            // APIからTODOリストを取得
+            const todos = await api(API_URL);
+            if (todos) {
+                // 取得したTODOをHTMLに変換して表示
+                document.getElementById('todoList').innerHTML = 
+                    todos.map(renderTodo).join('');
+            }
+        }
+
+        /**
+         * 新しいTODOを追加
+         * @param {string} title - 新しいTODOのタイトル
+         */
+        async function addTodo(title) {
+            // POSTリクエストでTODOを追加
+            await api(API_URL, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ title, completed: false })
+            });
+            // リストを再読み込みして表示を更新
+            loadTodos();
+        }
+
+        /**
+         * TODOの完了状態を切り替え
+         * @param {number} id - TODOのID
+         * @param {boolean} completed - 新しい完了状態
+         */
+        async function toggleTodo(id, completed) {
+            // 現在のTODO情報を取得
+            const todo = await api(`${API_URL}/${id}`);
+            if (todo) {
+                // PUTリクエストでTODOを更新
+                await api(`${API_URL}/${id}`, {
+                    method: 'PUT',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ ...todo, completed })
+                });
+                // リストを再読み込みして表示を更新
+                loadTodos();
+            }
+        }
+
+        /**
+         * TODOを削除
+         * @param {number} id - 削除するTODOのID
+         */
+        async function deleteTodo(id) {
+            // DELETEリクエストでTODOを削除
+            await api(`${API_URL}/${id}`, { method: 'DELETE' });
+            // リストを再読み込みして表示を更新
+            loadTodos();
+        }
+
+        // ページ読み込み完了時の処理
+        document.addEventListener('DOMContentLoaded', () => {
+            // 初期表示としてTODOリストを読み込む
+            loadTodos();
+            
+            // フォームの送信イベントを処理
+            document.getElementById('todoForm').addEventListener('submit', e => {
+                // フォームのデフォルトの送信動作を防止
+                e.preventDefault();
+                // 入力されたテキストを取得
+                const input = document.getElementById('todoInput');
+                const title = input.value.trim();
+                // テキストが入力されている場合のみTODOを追加
+                if (title) {
+                    addTodo(title);
+                    // 入力フィールドをクリア
+                    input.value = '';
+                }
+            });
+        });
+    </script>
+</body>
+</html>
